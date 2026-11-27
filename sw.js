@@ -1,5 +1,5 @@
 /* 오프라인에서도 앱 화면이 열리도록 앱 파일을 캐시합니다 (데이터는 앱이 따로 저장) */
-var CACHE = 'gagyebu-v3';
+var CACHE = 'gagyebu-v4';
 var FILES = ['./', 'index.html', 'style.css', 'app.js', 'parser.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));

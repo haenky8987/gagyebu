@@ -21,6 +21,36 @@ var CURRENCY_SYMBOLS = [
 // 금액/누적 등 가맹점이 아닌 줄을 거르는 패턴
 var NON_MERCHANT = /(누적|잔액|한도|포인트|일시불|할부|승인|취소|결제예정|님$|\*|^\d{1,2}\/\d{1,2}|^\d{1,2}:\d{2}|[\d,]+\s*원|Web발신|카드\(|체크)/;
 
+var MERCHANT_NOISE = /(해외승인|승인취소|승인|결제완료|결제|사용|일시불|할부|무이자|알림|되었습니다|되었어요|됐어요|완료|체크|신용|누적|잔액|한도|개월|이용|안내)/g;
+
+/** 한 줄에서 가맹점이 아닌 부분을 지움 */
+function cleanMerchant_(line, methods) {
+  var codes = CURRENCY_CODES.join('|');
+  var x = ' ' + String(line) + ' ';
+  x = x.replace(/\[Web발신\]/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/(누적|잔액|한도)\s*[:：]?\s*[\d,]+\s*원?/g, ' ')
+    .replace(new RegExp('\\b(' + codes + ')\\s?[\\d,]+(?:\\.\\d+)?', 'g'), ' ')
+    .replace(new RegExp('[\\d,]+(?:\\.\\d+)?\\s?(' + codes + ')\\b', 'g'), ' ')
+    .replace(/[\d,]+\s*원/g, ' ')
+    .replace(/\d{1,2}\/\d{1,2}(\s*\d{1,2}:\d{2})?/g, ' ')
+    .replace(/\d{1,2}:\d{2}/g, ' ')
+    .replace(/\(\d+\)/g, ' ');
+  // 카드사·은행 이름, 가려진 이름(홍*동) 단어 통째로 제거
+  var kws = [];
+  (methods || []).forEach(function (m) { (m.keywords || []).forEach(function (k) { if (k) kws.push(String(k).toUpperCase()); }); });
+  x = x.split(/\s+/).filter(function (w) {
+    if (!w) return false;
+    var u = w.toUpperCase();
+    if (/카드|은행|\*/.test(w)) return false;
+    for (var i = 0; i < kws.length; i++) if (u === kws[i] || (kws[i].length >= 2 && u.indexOf(kws[i]) === 0 && /카드|은행/.test(w))) return false;
+    return true;
+  }).join(' ');
+  x = x.replace(MERCHANT_NOISE, ' ').replace(/[|·:：()\[\]<>]/g, ' ').replace(/님\b/g, ' ').replace(/\s+/g, ' ').trim();
+  // 혼자 남은 한 글자(예: 현대카드 'M')는 버림
+  return x.split(' ').filter(function (w) { return w.length >= 2 || /[가-힣]/.test(w) && w.length >= 2; }).join(' ').trim();
+}
+
 function toNumber_(s) {
   return Number(String(s).replace(/,/g, ''));
 }
@@ -107,29 +137,17 @@ function parseCardSms(text, methods, now) {
     if (dm[3]) time = pad2_(Number(dm[3])) + ':' + dm[4];
   }
 
-  // 가맹점: 날짜/시간 이후의 첫 일반 줄 → 없으면 전체에서 첫 일반 줄
+  // 가맹점: 각 줄에서 금액·카드명·날짜·'승인' 같은 말을 지우고 남는 글자 (문자와 앱 푸시 모두)
   var lines = t.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
   var merchant = '';
   var afterIdx = -1;
   for (var i = 0; i < lines.length; i++) {
     if (/\d{1,2}\/\d{1,2}/.test(lines[i])) { afterIdx = i; break; }
   }
-  var candidates = afterIdx >= 0 ? lines.slice(afterIdx) : lines;
-  for (var j = 0; j < candidates.length && !merchant; j++) {
-    var c = candidates[j]
-      .replace(/\d{1,2}\/\d{1,2}\s*(\d{1,2}:\d{2})?/, '')
-      .replace(/(누적|잔액).*$/, '')
-      .trim();
-    if (!c) continue;
-    if (NON_MERCHANT.test(c)) continue;
-    if (/^[\d,.\s]+$/.test(c)) continue;
-    if (new RegExp('^(' + CURRENCY_CODES.join('|') + ')\\b').test(c)) continue;
-    merchant = c;
-  }
-  if (!merchant) {
-    for (var k = 0; k < lines.length && !merchant; k++) {
-      if (!NON_MERCHANT.test(lines[k]) && !/^[\d,.\s]+$/.test(lines[k])) merchant = lines[k];
-    }
+  var ordered = afterIdx >= 0 ? lines.slice(afterIdx).concat(lines.slice(0, afterIdx)) : lines;
+  for (var j = 0; j < ordered.length && !merchant; j++) {
+    var c = cleanMerchant_(ordered[j], methods);
+    if (c.replace(/[^0-9A-Za-z가-힣]/g, '').length >= 2) merchant = c;
   }
 
   return {
